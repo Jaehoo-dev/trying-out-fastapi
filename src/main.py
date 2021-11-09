@@ -1,8 +1,8 @@
 from enum import Enum
 from typing import Dict, List, Optional, Union, Set
 
-from fastapi import FastAPI, Path, Query, Body
-from pydantic import BaseModel, Field, HttpUrl
+from fastapi import FastAPI, Path, Query, Body, Form
+from pydantic import BaseModel, Field, HttpUrl, EmailStr
 
 
 class Image(BaseModel):
@@ -28,23 +28,68 @@ class ModelName(str, Enum):
     lenet = "lenet"
 
 
-class User(BaseModel):
+class UserBase(BaseModel):
     username: str
+    email: EmailStr
     full_name: Optional[str] = None
+
+
+class UserIn(UserBase):
+    password: str
+
+
+class UserOut(UserBase):
+    pass
+
+
+class UserInDB(UserBase):
+    hashed_password: str
+
+
+def fake_password_hasher(raw_password: str):
+    return "supersecret" + raw_password
 
 
 app = FastAPI()
 
-fake_items_db = [
-    {"item_name": "Foo"},
-    {"item_name": "Bar"},
-    {"item_name": "Baz"},
-]
+items = {
+    "foo": {"name": "Foo", "price": 50.2},
+    "bar": {
+        "name": "Bar",
+        "description": "The Bar fighters",
+        "price": 62,
+        "tax": 20.2,
+    },
+    "baz": {
+        "name": "Baz",
+        "description": "There goes my baz",
+        "price": 50.2,
+        "tax": 10.5,
+    },
+}
 
 
 @app.get("/")
 async def root():
     return {"message": "Hello World"}
+
+
+@app.post("/login/")
+async def login(username: str = Form(...), password: str = Form(...)):
+    return {"username": username}
+
+
+def fake_save_user(user_in: UserIn):
+    hashed_password = fake_password_hasher(user_in.password)
+    user_in_db = UserInDB(**user_in.dict(), hashed_password=hashed_password)
+    print("User saved! ..not really")
+    return user_in_db
+
+
+@app.post("/user/", response_model=UserOut)
+async def create_user(user_in: UserIn):
+    user_saved = fake_save_user(user_in)
+    return user_saved
 
 
 @app.get("/users/me")
@@ -76,7 +121,7 @@ async def read_user_item(
     return item
 
 
-@app.post("/items/")
+@app.post("/items/", response_model=Item)
 async def create_item(item: Item):
     item_dict = item.dict()
     if item.tax:
@@ -90,7 +135,7 @@ async def update_item(
     *,
     item_id: int,
     item: Item,
-    user: User,
+    user: UserBase,
     importance: int = Body(..., gt=0),
     q: Optional[str] = None
 ):
@@ -146,6 +191,38 @@ async def read_items_by_query(
     return results
 
 
+@app.get(
+    "/items/{item_id}",
+    response_model=Item,
+    response_model_exclude_unset=True
+)
+async def read_item(item_id: str):
+    return items[item_id]
+
+
+@app.get(
+    "/items/{item_id}/name",
+    response_model=Item,
+    response_model_include={"name", "description"},
+)
+async def read_item_name(item_id: str):
+    return items[item_id]
+
+
+@app.get(
+    "/items/{item_id}/public",
+    response_model=Item,
+    response_model_exclude={"tax"}
+)
+async def read_item_public_data(item_id: str):
+    return items[item_id]
+
+
 @app.post("/index-weights/")
 async def create_index_weights(weights: Dict[int, float]):
     return weights
+
+
+@app.get("/keyword-weights/", response_model=Dict[str, float])
+async def read_keyword_weights():
+    return {"foo": 2.3, "bar": 3.4}
